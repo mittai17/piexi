@@ -1,0 +1,5 @@
+{
+  "name": "Plexi AI Search",
+  "description": "An application inspired by the Arc browser's mobile search experience. It uses AI to search the entire web and provide a synthesized answer with sources, delivering an extraordinary and valuable browsing experience.",
+  "requestFramePermissions": []
+}
