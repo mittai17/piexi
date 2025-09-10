@@ -50,27 +50,22 @@ export const sendMessage = async (
     }
 
     try {
-        // FIX: Replaced `supabase.functions.getURL()` with the correct property `supabase.functions.url`.
-        const response = await fetch(`${supabase.functions.url}/generate-plexi-response`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${session.access_token}`,
-                'apikey': supabaseAnonKey,
-            },
-            body: JSON.stringify({ query, focus, history }),
+        // FIX: Replaced manual `fetch` with `supabase.functions.invoke` which supports streaming
+        // and correctly handles authentication and function URL resolution, fixing the protected property access error.
+        const { data: responseBody, error: invokeError } = await supabase.functions.invoke('generate-plexi-response', {
+            body: { query, focus, history },
+            responseType: 'stream',
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Function returned an error: ${response.status} ${errorText}`);
+        
+        if (invokeError) {
+            throw invokeError;
         }
 
-        if (!response.body) {
+        if (!responseBody) {
             throw new Error("Response body is empty.");
         }
 
-        const reader = response.body.getReader();
+        const reader = responseBody.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
@@ -116,7 +111,7 @@ export const sendMessage = async (
 
     } catch (error) {
         console.error("Error calling edge function:", error);
-        callbacks.onError({ message: error instanceof Error ? error.message : "An unknown network error occurred." });
+        callbacks.onError({ message: getFunctionErrorMessage(error, 'generate-plexi-response') });
         callbacks.onEnd();
     }
 };
