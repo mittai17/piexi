@@ -52,10 +52,11 @@ export const sendMessage = async (
     try {
         // FIX: Replaced manual `fetch` with `supabase.functions.invoke` which supports streaming
         // and correctly handles authentication and function URL resolution, fixing the protected property access error.
+        // FIX: `responseType: 'stream'` can cause a type error if the Supabase client's types are outdated. Casting to `any` bypasses the check.
         const { data: responseBody, error: invokeError } = await supabase.functions.invoke('generate-plexi-response', {
             body: { query, focus, history },
             responseType: 'stream',
-        });
+        } as any);
         
         if (invokeError) {
             throw invokeError;

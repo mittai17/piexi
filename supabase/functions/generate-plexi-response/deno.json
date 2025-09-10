@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "npm:@google/genai": "npm:@google/genai@^1.18.0"
+  }
+}
