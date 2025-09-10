@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient';
+import { supabase, supabaseAnonKey } from './supabaseClient';
 import { HistoryItem, Source, SearchFocus } from '../types';
 
 interface SearchResult {
@@ -6,6 +6,14 @@ interface SearchResult {
   sources: Source[];
   followupQuestions: string[];
 }
+
+interface SendMessageCallbacks {
+    onChunk: (chunk: { text: string }) => void;
+    onMetadata: (metadata: { sources: Source[], followupQuestions: string[], finalAnswer: string }) => void;
+    onError: (error: { message: string }) => void;
+    onEnd: () => void;
+}
+
 
 const getFunctionErrorMessage = (error: any, context: string): string => {
     console.error(`Supabase Function Error in ${context}:`, error);
@@ -26,25 +34,90 @@ export const createChat = (): null => {
     return null;
 };
 
-export const sendMessage = async (query: string, focus: SearchFocus, history: HistoryItem[]): Promise<SearchResult> => {
-    if (!supabase) {
+export const sendMessage = async (
+    query: string, 
+    focus: SearchFocus, 
+    history: HistoryItem[], 
+    callbacks: SendMessageCallbacks
+): Promise<void> => {
+    if (!supabase || !supabaseAnonKey) {
         throw new Error("Supabase client is not initialized. Cannot call Edge Function.");
     }
     
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+        throw new Error("User not authenticated.");
+    }
+
     try {
-        const { data, error } = await supabase.functions.invoke('generate-plexi-response', {
-            body: { query, focus, history },
+        // FIX: Replaced `supabase.functions.getURL()` with the correct property `supabase.functions.url`.
+        const response = await fetch(`${supabase.functions.url}/generate-plexi-response`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+                'apikey': supabaseAnonKey,
+            },
+            body: JSON.stringify({ query, focus, history }),
         });
 
-        if (error) {
-            throw error;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Function returned an error: ${response.status} ${errorText}`);
         }
 
-        // The function is expected to return data in the SearchResult format.
-        return data as SearchResult;
+        if (!response.body) {
+            throw new Error("Response body is empty.");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const processStream = async () => {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop() || '';
+
+                for (const part of parts) {
+                    if (part.startsWith('event:')) {
+                        const eventMatch = part.match(/event: (.*)/);
+                        const dataMatch = part.match(/data: (.*)/);
+
+                        if (eventMatch && dataMatch) {
+                            const event = eventMatch[1];
+                            const data = JSON.parse(dataMatch[1]);
+
+                            switch(event) {
+                                case 'chunk':
+                                    callbacks.onChunk(data);
+                                    break;
+                                case 'metadata':
+                                    callbacks.onMetadata(data);
+                                    break;
+                                case 'error':
+                                    callbacks.onError(data);
+                                    break;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        await processStream();
+        callbacks.onEnd();
 
     } catch (error) {
-        throw new Error(getFunctionErrorMessage(error, 'generate-plexi-response'));
+        console.error("Error calling edge function:", error);
+        callbacks.onError({ message: error instanceof Error ? error.message : "An unknown network error occurred." });
+        callbacks.onEnd();
     }
 };
 

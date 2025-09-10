@@ -24,9 +24,22 @@ export const LoginPage: React.FC = () => {
 
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: window.location.origin,
+          },
+        });
         if (error) throw error;
-        setMessage('Check your email for the confirmation link!');
+        
+        if (data.user && !data.session) {
+           setMessage('Please check your email for a confirmation link. Be sure to check your spam folder!');
+        } else if (data.session) {
+           // User is logged in, onAuthStateChange will handle navigation.
+           setMessage('Sign up successful! Redirecting...');
+        }
+
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -46,15 +59,27 @@ export const LoginPage: React.FC = () => {
     }
     setGoogleLoading(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+          skipBrowserRedirect: true, // Prevent auto-redirect to handle iframe scenarios
+        },
     });
 
     if (error) {
         setError(error.message);
         setGoogleLoading(false);
+    } else if (data.url) {
+        // Manually redirect the top-level window to break out of any iframes.
+        // Directly setting `window.top.location.href` can be blocked by restrictive
+        // iframe sandboxes. Using `window.open` with `_top` as the target is an
+        // alternative way to request navigation of the top-level browsing context.
+        window.open(data.url, '_top');
+    } else {
+        setError("Could not get the Google sign-in URL.");
+        setGoogleLoading(false);
     }
-    // On success, Supabase redirects and the onAuthState listener handles the session.
   };
 
   return (

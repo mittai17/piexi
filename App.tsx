@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { sendMessage, generateSessionSummary } from './services/geminiService';
-import { HistoryItem, TabSession, AppMode, Bookmark, Folder, SearchFocus } from './types';
+import { HistoryItem, TabSession, AppMode, Bookmark, Folder, SearchFocus, Source } from './types';
 import { SearchBar } from './components/SearchBar';
 import { LoadingIndicator } from './components/LoadingIndicator';
 import { AnswerCard } from './components/AnswerCard';
@@ -149,10 +149,12 @@ const App: React.FC = () => {
 
 
   useEffect(() => {
-    if (activeTab?.isLoading && hasSearched) {
-      scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
+    if (activeTab?.isLoading || activeTab?.history.some(h => !h.sources?.length)) {
+       setTimeout(() => {
+           scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
+       }, 100);
     }
-  }, [activeTab?.isLoading, hasSearched]);
+  }, [tabs, activeTab?.isLoading, activeTab?.history]);
   
   const handleToggleIncognito = () => {
     setError(null);
@@ -173,7 +175,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSearch = useCallback(async (explicitQuery?: string) => {
+    const handleSearch = useCallback(async (explicitQuery?: string) => {
     const currentQuery = explicitQuery ?? query;
     if (!currentQuery.trim() || !activeTab || !activeTabId) return;
 
@@ -190,49 +192,93 @@ const App: React.FC = () => {
       ? `Please provide a concise summary of the content found at this URL: ${currentQuery}`
       : currentQuery;
 
-    try {
-      const result = await sendMessage(prompt, currentFocus, currentHistory);
-      
-      let finalSources = result.sources;
-      if (isUrl) {
-         try {
-            const hostname = new URL(currentQuery).hostname;
-            finalSources = [{ uri: currentQuery, title: `Content from ${hostname}` }];
-        } catch (e) {
-            finalSources = [{ uri: currentQuery, title: 'Original Source' }];
-        }
-      }
+    const newItemId = new Date().toISOString() + Math.random();
+    const placeholderItem: HistoryItem = {
+      id: newItemId,
+      query: currentQuery,
+      answer: '',
+      sources: [],
+      popularity: { shares: 0, bookmarks: 0 },
+      followupQuestions: [],
+    };
 
-      const popularity = {
-        shares: Math.floor(Math.random() * 9950) + 50,
-        bookmarks: Math.floor(Math.random() * 1990) + 10,
-      };
-      
-      const newItem: HistoryItem = {
-        id: new Date().toISOString() + Math.random(),
-        query: currentQuery, 
-        answer: result.answer, 
-        sources: finalSources, 
-        popularity,
-        followupQuestions: result.followupQuestions,
-      };
-      
+    setTabs(prevTabs => prevTabs.map(tab => {
+      if (tab.id === activeTabId) {
+        const isFirstSearch = tab.history.length === 0;
+        return {
+          ...tab,
+          title: isFirstSearch ? currentQuery : tab.title,
+          history: [...tab.history, placeholderItem],
+        };
+      }
+      return tab;
+    }));
+
+    try {
+      await sendMessage(prompt, currentFocus, currentHistory, {
+        onChunk: ({ text }) => {
+          setTabs(prevTabs => prevTabs.map(tab => {
+            if (tab.id === activeTabId) {
+              return {
+                ...tab,
+                history: tab.history.map(item =>
+                  item.id === newItemId ? { ...item, answer: item.answer + text } : item
+                ),
+              };
+            }
+            return tab;
+          }));
+        },
+        onMetadata: ({ sources, followupQuestions, finalAnswer }) => {
+          let finalSources: Source[] = sources;
+          if (isUrl) {
+            try {
+              const hostname = new URL(currentQuery).hostname;
+              finalSources = [{ uri: currentQuery, title: `Content from ${hostname}` }];
+            } catch (e) {
+              finalSources = [{ uri: currentQuery, title: 'Original Source' }];
+            }
+          }
+          const popularity = {
+            shares: Math.floor(Math.random() * 9950) + 50,
+            bookmarks: Math.floor(Math.random() * 1990) + 10,
+          };
+          setTabs(prevTabs => prevTabs.map(tab => {
+            if (tab.id === activeTabId) {
+              return {
+                ...tab,
+                history: tab.history.map(item =>
+                  item.id === newItemId
+                    ? { ...item, answer: finalAnswer, sources: finalSources, followupQuestions, popularity }
+                    : item
+                ),
+              };
+            }
+            return tab;
+          }));
+        },
+        onError: ({ message }) => {
+          setError(message);
+          setTabs(prevTabs => prevTabs.map(tab => {
+            if (tab.id === activeTabId) {
+              return { ...tab, history: tab.history.filter(item => item.id !== newItemId) };
+            }
+            return tab;
+          }));
+        },
+        onEnd: () => {
+          setIsLoading(false);
+        },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+      setIsLoading(false);
       setTabs(prevTabs => prevTabs.map(tab => {
         if (tab.id === activeTabId) {
-          const isFirstSearch = tab.history.length === 0;
-          return {
-            ...tab,
-            title: isFirstSearch ? currentQuery : tab.title,
-            history: [...tab.history, newItem],
-          };
+          return { ...tab, history: tab.history.filter(item => item.id !== newItemId) };
         }
         return tab;
       }));
-
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-    } finally {
-      setIsLoading(false);
     }
   }, [query, activeTab, activeTabId]);
   
@@ -422,49 +468,91 @@ const App: React.FC = () => {
 
     const itemIndex = activeTab.history.findIndex(h => h.id === editingHistoryItemId);
     if (itemIndex === -1) return;
+    
+    const originalHistory = activeTab.history;
 
     setIsLoading(true);
     setError(null);
+    setEditingHistoryItemId(null);
+    setEditedQueryText('');
 
-    // Truncate history to the point before the edit
     const truncatedHistory = activeTab.history.slice(0, itemIndex);
     const newQuery = editedQueryText;
 
-    try {
-      const result = await sendMessage(newQuery, activeTab.searchFocus, truncatedHistory);
-      
-      const popularity = {
-        shares: Math.floor(Math.random() * 9950) + 50,
-        bookmarks: Math.floor(Math.random() * 1990) + 10,
-      };
-      
-      const newItem: HistoryItem = {
-        id: new Date().toISOString() + Math.random(),
-        query: newQuery,
-        answer: result.answer,
-        sources: result.sources,
-        popularity,
-        followupQuestions: result.followupQuestions,
-      };
+    const newItemId = new Date().toISOString() + Math.random();
+    const placeholderItem: HistoryItem = {
+      id: newItemId,
+      query: newQuery,
+      answer: '',
+      sources: [],
+      popularity: { shares: 0, bookmarks: 0 },
+      followupQuestions: [],
+    };
 
+    setTabs(prevTabs => prevTabs.map(tab => {
+      if (tab.id === activeTabId) {
+        const newHistory = [...truncatedHistory, placeholderItem];
+        return { ...tab, history: newHistory, title: itemIndex === 0 ? newQuery : tab.title };
+      }
+      return tab;
+    }));
+
+    try {
+      await sendMessage(newQuery, activeTab.searchFocus, truncatedHistory, {
+        onChunk: ({ text }) => {
+          setTabs(prevTabs => prevTabs.map(tab => {
+            if (tab.id === activeTabId) {
+              return {
+                ...tab,
+                history: tab.history.map(item =>
+                  item.id === newItemId ? { ...item, answer: item.answer + text } : item
+                ),
+              };
+            }
+            return tab;
+          }));
+        },
+        onMetadata: ({ sources, followupQuestions, finalAnswer }) => {
+          const popularity = {
+            shares: Math.floor(Math.random() * 9950) + 50,
+            bookmarks: Math.floor(Math.random() * 1990) + 10,
+          };
+          setTabs(prevTabs => prevTabs.map(tab => {
+            if (tab.id === activeTabId) {
+              return {
+                ...tab,
+                history: tab.history.map(item =>
+                  item.id === newItemId
+                    ? { ...item, answer: finalAnswer, sources, followupQuestions, popularity }
+                    : item
+                ),
+              };
+            }
+            return tab;
+          }));
+        },
+        onError: ({ message }) => {
+          setError(message);
+          setTabs(prevTabs => prevTabs.map(tab => {
+            if (tab.id === activeTabId) {
+              return { ...tab, history: originalHistory };
+            }
+            return tab;
+          }));
+        },
+        onEnd: () => {
+          setIsLoading(false);
+        },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+      setIsLoading(false);
       setTabs(prevTabs => prevTabs.map(tab => {
         if (tab.id === activeTabId) {
-          // Replace the old history branch with the new one
-          const newHistory = [...truncatedHistory, newItem];
-          return {
-            ...tab,
-            history: newHistory,
-            // If it's the first item, update the tab title
-            title: itemIndex === 0 ? newQuery : tab.title,
-          };
+          return { ...tab, history: originalHistory };
         }
         return tab;
       }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-    } finally {
-      setIsLoading(false);
-      handleCancelEdit(); // Reset editing state
     }
   };
   

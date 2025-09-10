@@ -1,4 +1,3 @@
-// FIX: Removed invalid Deno types reference and declared Deno global to fix type errors.
 declare const Deno: any;
 
 import { GoogleGenAI } from "npm:@google/genai";

@@ -1,5 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { Bookmark, Folder, HistoryItem } from '../types';
+// Fix: Import HistoryItem from the central types file to ensure type consistency across the app.
+// Inlining the type created a separate declaration that conflicted with the one used in dataService.ts.
+import { HistoryItem } from '../types';
+
+// Inlined types are removed to use the single source of truth from types.ts
 
 // Define the database type for type safety with Supabase client
 // We are only typing the tables we interact with in this app.
@@ -7,28 +11,47 @@ export type Database = {
   public: {
     Tables: {
       bookmarks: {
-        Row: Bookmark;
-        Insert: {
-          // FIX: Removed database-generated columns (id, created_at) from Insert type.
+        Row: {
+          id: string;
           history_item: HistoryItem;
+          created_at: string;
+          folder_id: string | null;
+        };
+        // Fix: Relaxed Insert and Update types to be more flexible and avoid inference issues.
+        Insert: {
+          id?: string;
+          history_item: HistoryItem;
+          created_at?: string;
           folder_id: string | null;
         };
         Update: {
-          // FIX: Removed fields that should not be updated from the client.
+          id?: string;
           history_item?: HistoryItem;
+          created_at?: string;
           folder_id?: string | null;
         };
+        // FIX: Add empty Relationships array. The Supabase client's type inference requires this property to be present on table definitions.
+        Relationships: [];
       };
       folders: {
-        Row: Folder;
-        Insert: {
-          // FIX: Removed database-generated columns (id, created_at) from Insert type.
+        Row: {
+          id: string;
           name: string;
+          created_at: string;
+        };
+        // Fix: Relaxed Insert and Update types to be more flexible and avoid inference issues.
+        Insert: {
+          id?: string;
+          name: string;
+          created_at?: string;
         };
         Update: {
-          // FIX: Removed fields that should not be updated from the client.
+          id?: string;
           name?: string;
+          created_at?: string;
         };
+        // FIX: Add empty Relationships array. The Supabase client's type inference requires this property to be present on table definitions.
+        Relationships: [];
       };
     };
     Views: {
@@ -41,8 +64,8 @@ export type Database = {
 };
 
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseUrl = "https://pyjqceghzywgznhxzakg.supabase.co";
+export const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5anFjZWdoenl3Z3puaHh6YWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0ODE1MDMsImV4cCI6MjA3MzA1NzUwM30.OrMt01YVYPr-bgXgqx3Ny0Z7V38u-2fHRfJ3EIaLhH8";
 
 // The client will be null if the environment variables are not set.
 let supabase: SupabaseClient<Database> | null = null;

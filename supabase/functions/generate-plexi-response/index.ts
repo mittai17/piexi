@@ -1,7 +1,6 @@
-// FIX: Removed invalid Deno types reference and declared Deno global to fix type errors.
 declare const Deno: any;
 
-import { GoogleGenAI, Chat, Content } from "npm:@google/genai";
+import { GoogleGenAI, Content } from "npm:@google/genai";
 
 // Ensure you have set the GEMINI_API_KEY in your Supabase project's secrets
 const apiKey = Deno.env.get("GEMINI_API_KEY");
@@ -72,42 +71,71 @@ Deno.serve(async (req) => {
       });
     }
 
-    const chat = ai.chats.create({
+    const responseStream = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
+        contents: [
+            ...buildChatHistory(history || []),
+            { role: 'user', parts: [{ text: `${getFocusPromptPrefix(focus || 'all')}${query}` }] }
+        ],
         config: {
             tools: [{ googleSearch: {} }],
             systemInstruction: "You are Plexi, an AI search engine powered by the Google Search tool. Your primary function is to use Google Search to find the most relevant and up-to-date information to answer user queries. Provide comprehensive, clear, and well-structured answers based on the search results. Always cite your sources from the search results. Use markdown for formatting. After the main answer, include a <followup_questions> section containing 3-4 relevant follow-up questions a user might ask. Each question should be on a new line."
         },
-        history: buildChatHistory(history || []),
     });
 
-    const finalQuery = `${getFocusPromptPrefix(focus || 'all')}${query}`;
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
 
-    const response = await chat.sendMessage({ message: finalQuery });
-    
-    let answer = response.text;
-    if (!answer) throw new Error("Received an empty response from the AI.");
+        const sendJSON = (event, data) => {
+          controller.enqueue(encoder.encode(`event: ${event}\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        };
 
-    const followupRegex = /<followup_questions>([\s\S]*?)<\/followup_questions>/;
-    const followupMatch = answer.match(followupRegex);
-    const followupQuestions = followupMatch
-      ? followupMatch[1].trim().split('\n').map(q => q.trim()).filter(Boolean)
-      : [];
-    
-    answer = answer.replace(followupRegex, '').trim();
+        try {
+          for await (const chunk of responseStream.stream) {
+            const text = chunk.text;
+            if (text) {
+              sendJSON('chunk', { text });
+            }
+          }
+          
+          const aggregatedResponse = await responseStream.response;
+          const fullText = aggregatedResponse.text;
 
-    const rawSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    const sources: Source[] = rawSources
-      .filter(chunk => chunk.web && chunk.web.uri && chunk.web.title)
-      .map(chunk => ({
-        uri: chunk.web.uri,
-        title: chunk.web.title,
-      }))
-      .filter((source, index, self) => index === self.findIndex((s) => s.uri === source.uri));
+          const followupRegex = /<followup_questions>([\s\S]*?)<\/followup_questions>/;
+          const followupMatch = fullText.match(followupRegex);
+          const followupQuestions = followupMatch
+            ? followupMatch[1].trim().split('\n').map(q => q.trim().replace(/^- /, '')).filter(Boolean)
+            : [];
+          
+          const answer = fullText.replace(followupRegex, '').trim();
+
+          const rawSources = aggregatedResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+          const sources: Source[] = rawSources
+            .filter(chunk => chunk.web && chunk.web.uri && chunk.web.title)
+            .map(chunk => ({
+              uri: chunk.web.uri,
+              title: chunk.web.title,
+            }))
+            .filter((source, index, self) => index === self.findIndex((s) => s.uri === source.uri));
+
+          sendJSON('metadata', { sources, followupQuestions, finalAnswer: answer });
+
+        } catch (e) {
+            console.error("Error during stream processing:", e);
+            sendJSON('error', { message: e.message });
+        } finally {
+            controller.close();
+        }
+      },
+    });
       
-    return new Response(JSON.stringify({ answer, sources, followupQuestions }), {
+    return new Response(stream, {
       headers: { 
-        "Content-Type": "application/json",
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
       },

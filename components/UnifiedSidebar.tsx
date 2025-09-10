@@ -164,8 +164,8 @@ const SidebarNavButton: React.FC<{label: string, icon: React.ReactNode, isActive
 );
 
 const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onNewTab' | 'onCloseTab' | 'onSwitchTab'| 'onRenameTab' | 'onReorderTabs'>> = (props) => {
-    // This combines the logic from the old TabBar component
     const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+    const [dropTargetId, setDropTargetId] = useState<string | null>(null);
     const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState('');
     const renameInputRef = useRef<HTMLInputElement>(null);
@@ -182,7 +182,21 @@ const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onN
       setDraggedTabId(tabId);
     };
 
-    const handleDragEnd = () => setDraggedTabId(null);
+    const handleDragEnd = () => {
+        setDraggedTabId(null);
+        setDropTargetId(null);
+    };
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>, targetTabId: string) => {
+        e.preventDefault();
+        if (draggedTabId && draggedTabId !== targetTabId) {
+            setDropTargetId(targetTabId);
+        }
+    };
+
+    const handleDragLeave = () => {
+        setDropTargetId(null);
+    };
 
     const handleDrop = (e: React.DragEvent<HTMLDivElement>, targetTabId: string) => {
       e.preventDefault();
@@ -191,6 +205,7 @@ const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onN
         props.onReorderTabs(draggedId, targetTabId);
       }
       setDraggedTabId(null);
+      setDropTargetId(null);
     };
     
     const handleStartRename = (tab: TabSession) => {
@@ -219,11 +234,12 @@ const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onN
                         draggable={!renamingTabId}
                         onDragStart={(e) => handleDragStart(e, tab.id)}
                         onDragEnd={handleDragEnd}
-                        onDragOver={(e) => e.preventDefault()}
+                        onDragOver={(e) => handleDragOver(e, tab.id)}
+                        onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(e, tab.id)}
                         onClick={() => props.onSwitchTab(tab.id)}
                         onDoubleClick={() => handleStartRename(tab)}
-                        className={`flex items-center gap-2 w-full p-2 rounded-md cursor-pointer transition-all duration-200 ${ props.activeTabId === tab.id ? 'bg-purple-800/50 text-white' : 'text-gray-400 hover:bg-gray-700/50' } ${ draggedTabId === tab.id ? 'opacity-30' : ''}`}
+                        className={`flex items-center gap-2 w-full p-2 rounded-md cursor-pointer transition-all duration-200 ${ props.activeTabId === tab.id ? 'bg-purple-800/50 text-white' : 'text-gray-400 hover:bg-gray-700/50' } ${ draggedTabId === tab.id ? 'opacity-30' : ''} ${ dropTargetId === tab.id ? 'ring-2 ring-purple-500' : ''}`}
                         title={tab.title}
                     >
                         {tab.isLoading && <TabSpinner />}
