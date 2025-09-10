@@ -12,6 +12,7 @@ import { SplashScreen } from './SplashScreen';
 import { supabase } from './services/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import * as dataService from './services/dataService';
+import { EditIcon } from './components/EditIcon';
 
 
 const URL_REGEX = /^(https|http):\/\/[^\s/$.?#].[^\s]*$/i;
@@ -39,6 +40,9 @@ const App: React.FC = () => {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   const [query, setQuery] = useState('');
+  const [editingHistoryItemId, setEditingHistoryItemId] = useState<string | null>(null);
+  const [editedQueryText, setEditedQueryText] = useState('');
+
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const normalSessionRef = useRef<{ tabs: TabSession[], activeTabId: string | null }>({ tabs: [], activeTabId: null });
@@ -402,6 +406,68 @@ const App: React.FC = () => {
     };
   }, [handleNewTab, handleCloseTab, handleSwitchTab, activeTabId, tabs]);
 
+  // --- Edit History Functions ---
+  const handleStartEdit = (item: HistoryItem) => {
+    setEditingHistoryItemId(item.id);
+    setEditedQueryText(item.query);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingHistoryItemId(null);
+    setEditedQueryText('');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingHistoryItemId || !activeTabId || !activeTab) return;
+
+    const itemIndex = activeTab.history.findIndex(h => h.id === editingHistoryItemId);
+    if (itemIndex === -1) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    // Truncate history to the point before the edit
+    const truncatedHistory = activeTab.history.slice(0, itemIndex);
+    const newQuery = editedQueryText;
+
+    try {
+      const result = await sendMessage(newQuery, activeTab.searchFocus, truncatedHistory);
+      
+      const popularity = {
+        shares: Math.floor(Math.random() * 9950) + 50,
+        bookmarks: Math.floor(Math.random() * 1990) + 10,
+      };
+      
+      const newItem: HistoryItem = {
+        id: new Date().toISOString() + Math.random(),
+        query: newQuery,
+        answer: result.answer,
+        sources: result.sources,
+        popularity,
+        followupQuestions: result.followupQuestions,
+      };
+
+      setTabs(prevTabs => prevTabs.map(tab => {
+        if (tab.id === activeTabId) {
+          // Replace the old history branch with the new one
+          const newHistory = [...truncatedHistory, newItem];
+          return {
+            ...tab,
+            history: newHistory,
+            // If it's the first item, update the tab title
+            title: itemIndex === 0 ? newQuery : tab.title,
+          };
+        }
+        return tab;
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+    } finally {
+      setIsLoading(false);
+      handleCancelEdit(); // Reset editing state
+    }
+  };
+  
   const bgColor = mode === 'incognito' ? 'bg-[#202124]' : 'bg-transparent';
   const logoInnerColor = mode === 'incognito' ? '#202124' : '#1a1a1a';
 
@@ -474,7 +540,32 @@ const App: React.FC = () => {
                     {activeTab?.history.map((item, index) => (
                         <div key={item.id} ref={el => { itemRefs.current[index] = el; }} className="animate-fade-in-up scroll-mt-8">
                             <div className="mb-4">
-                                <p className="text-lg text-gray-200 font-semibold p-4 bg-gray-900/50 border border-gray-700 rounded-xl break-words">{item.query}</p>
+                                {editingHistoryItemId === item.id ? (
+                                    <div className="p-4 bg-gray-900/80 border border-purple-600 rounded-xl">
+                                        <textarea
+                                            value={editedQueryText}
+                                            onChange={(e) => setEditedQueryText(e.target.value)}
+                                            className="w-full bg-transparent text-lg text-white outline-none resize-none"
+                                            rows={2}
+                                            autoFocus
+                                        />
+                                        <div className="flex justify-end gap-2 mt-2">
+                                            <button onClick={handleCancelEdit} className="px-3 py-1 text-sm rounded-md text-gray-300 hover:bg-gray-700">Cancel</button>
+                                            <button onClick={handleSaveEdit} className="px-3 py-1 text-sm rounded-md text-white bg-purple-600 hover:bg-purple-700">Save & Rerun</button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="group relative p-4 bg-gray-900/50 border border-gray-700 rounded-xl">
+                                        <p className="text-lg text-gray-200 font-semibold break-words">{item.query}</p>
+                                        <button 
+                                            onClick={() => handleStartEdit(item)}
+                                            className="absolute top-2 right-2 p-1.5 rounded-full text-gray-400 bg-gray-800/50 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                                            aria-label="Edit query"
+                                        >
+                                            <EditIcon className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             <AnswerCard
                                 answer={item.answer}

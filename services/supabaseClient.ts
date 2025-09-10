@@ -9,29 +9,25 @@ export type Database = {
       bookmarks: {
         Row: Bookmark;
         Insert: {
-          id?: string;
+          // FIX: Removed database-generated columns (id, created_at) from Insert type.
           history_item: HistoryItem;
-          created_at?: string;
           folder_id: string | null;
         };
         Update: {
-          id?: string;
+          // FIX: Removed fields that should not be updated from the client.
           history_item?: HistoryItem;
-          created_at?: string;
           folder_id?: string | null;
         };
       };
       folders: {
         Row: Folder;
         Insert: {
-          id?: string;
+          // FIX: Removed database-generated columns (id, created_at) from Insert type.
           name: string;
-          created_at?: string;
         };
         Update: {
-          id?: string;
+          // FIX: Removed fields that should not be updated from the client.
           name?: string;
-          created_at?: string;
         };
       };
     };
