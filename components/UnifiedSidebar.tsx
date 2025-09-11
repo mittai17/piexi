@@ -11,8 +11,8 @@ import { CloseIcon } from './CloseIcon';
 import { TabSpinner } from './TabSpinner';
 import { TabsIcon } from './TabsIcon';
 import { TrashIcon } from './TrashIcon';
-import { supabase } from '../services/supabaseClient';
-import type { Session } from '@supabase/supabase-js';
+import { auth } from '../services/supabaseClient'; // Imports Firebase client (previously Supabase)
+import type { User } from 'firebase/auth';
 import { SparkleIcon } from './SparkleIcon';
 import { ExtensionIcon } from './ExtensionIcon';
 
@@ -46,7 +46,7 @@ interface UnifiedSidebarProps {
   onToggleIncognito: () => void;
   onClearHistory: () => void;
   // Auth
-  session: Session | null;
+  user: User | null;
   onShowLogin: () => void;
   // Extensions
   availableExtensions: Extension[];
@@ -359,12 +359,12 @@ const BookmarkItem: React.FC<{ bookmark: Bookmark, onDelete: (id: string) => voi
 );
 
 
-const BookmarksView: React.FC<Pick<UnifiedSidebarProps, 'bookmarks' | 'folders' | 'onAddFolder' | 'onDeleteFolder' | 'onMoveBookmark' | 'onDeleteBookmark' | 'session' | 'onShowLogin'>> = (props) => {
+const BookmarksView: React.FC<Pick<UnifiedSidebarProps, 'bookmarks' | 'folders' | 'onAddFolder' | 'onDeleteFolder' | 'onMoveBookmark' | 'onDeleteBookmark' | 'user' | 'onShowLogin'>> = (props) => {
     const [newFolderName, setNewFolderName] = useState('');
     const [draggedBookmarkId, setDraggedBookmarkId] = useState<string | null>(null);
     const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
 
-    if (!props.session) {
+    if (!props.user) {
         return (
             <div className="p-6 text-center text-gray-400 flex flex-col items-center justify-center h-full">
                 <BookmarkSidebarIcon className="w-12 h-12 mx-auto mb-4 text-gray-600" />
@@ -574,22 +574,23 @@ const InsightsView: React.FC<{history: HistoryItem[], isActive: boolean}> = ({ h
     );
 };
 
-const SettingsView: React.FC<Pick<UnifiedSidebarProps, 'mode' | 'onToggleIncognito' | 'onClearHistory' | 'session' | 'onShowLogin'>> = ({ mode, onToggleIncognito, onClearHistory, session, onShowLogin }) => {
+const SettingsView: React.FC<Pick<UnifiedSidebarProps, 'mode' | 'onToggleIncognito' | 'onClearHistory' | 'user' | 'onShowLogin'>> = ({ mode, onToggleIncognito, onClearHistory, user, onShowLogin }) => {
     const handleLogout = async () => {
-        if (supabase) {
-            const { error } = await supabase.auth.signOut();
-            if (error) {
-                console.error("Error signing out:", error);
+        if (auth) {
+            try {
+                await auth.signOut();
+            } catch (error) {
+                 console.error("Error signing out:", error);
             }
         }
     };
     
     return (
         <div className="p-4 space-y-6">
-            {session ? (
+            {user ? (
                 <div className="p-4 bg-gray-800/50 rounded-lg space-y-4">
                     <p className="text-gray-300 break-words">
-                        Signed in as <span className="font-semibold text-white">{session.user.email}</span>
+                        Signed in as <span className="font-semibold text-white">{user.email}</span>
                     </p>
                     <button
                         onClick={handleLogout}

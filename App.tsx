@@ -9,8 +9,8 @@ import { PlexiLogo } from './components/PlexiLogo';
 import { MenuIcon } from './components/MenuIcon';
 import { LoginPage } from './LoginPage';
 import { SplashScreen } from './SplashScreen';
-import { supabase } from './services/supabaseClient';
-import type { Session } from '@supabase/supabase-js';
+import { auth } from './services/supabaseClient'; // Imports Firebase client (previously Supabase)
+import type { User } from 'firebase/auth';
 import * as dataService from './services/dataService';
 import { EditIcon } from './components/EditIcon';
 import { BrowserView } from './components/BrowserView';
@@ -62,7 +62,7 @@ const App: React.FC = () => {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [showLoginPage, setShowLoginPage] = useState(false);
 
@@ -132,29 +132,20 @@ const App: React.FC = () => {
       }
     }
     
-    // Subscribe to Supabase auth changes
-    if (!supabase) {
-        setIsCheckingAuth(false);
-        return;
-    }
-    
-    supabase.auth.getSession().then(({ data: { session } }) => {
-        setSession(session);
+    // Subscribe to Firebase auth changes
+    const unsubscribe = auth.onAuthStateChanged(user => {
+        setUser(user);
         setIsCheckingAuth(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
 
   }, []);
 
   useEffect(() => {
-     // Load bookmarks and folders from Supabase, but only if logged in
+     // Load bookmarks and folders from Firestore, but only if logged in
     const fetchData = async () => {
-      if (!session) {
+      if (!user) {
           // If user logs out, clear their data
           setBookmarks([]);
           setFolders([]);
@@ -174,7 +165,7 @@ const App: React.FC = () => {
       }
     }
     fetchData();
-  }, [session]);
+  }, [user]);
 
   useEffect(() => {
     // Save state to local storage
@@ -192,10 +183,10 @@ const App: React.FC = () => {
 
   // Close login modal automatically on successful sign-in
   useEffect(() => {
-    if (session) {
+    if (user) {
       setShowLoginPage(false);
     }
-  }, [session]);
+  }, [user]);
 
   useEffect(() => {
     if (activeTab?.view === 'browse') {
@@ -434,7 +425,7 @@ const App: React.FC = () => {
   };
   
   const handleToggleBookmark = async (historyItem: HistoryItem) => {
-    if (!session) {
+    if (!user) {
         setShowLoginPage(true);
         return;
     }
@@ -679,7 +670,7 @@ const App: React.FC = () => {
           mode={mode}
           onToggleIncognito={handleToggleIncognito}
           onClearHistory={handleClearHistory}
-          session={session}
+          user={user}
           onShowLogin={() => setShowLoginPage(true)}
           availableExtensions={availableExtensions}
           installedExtensions={installedExtensions}

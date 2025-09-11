@@ -1,5 +1,12 @@
 import React, { useState } from 'react';
-import { supabase } from './services/supabaseClient';
+import { auth } from './services/supabaseClient'; // Imports Firebase client (previously Supabase)
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  sendEmailVerification
+} from 'firebase/auth';
 import { PlexiLogo } from './components/PlexiLogo';
 import { GoogleIcon } from './components/GoogleIcon';
 import { CloseIcon } from './components/CloseIcon';
@@ -15,7 +22,7 @@ export const LoginPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supabase) {
+    if (!auth) {
       setError("Authentication is not configured.");
       return;
     }
@@ -25,56 +32,34 @@ export const LoginPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
     try {
       if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: window.location.origin,
-          },
-        });
-        if (error) throw error;
-        
-        if (data.user && !data.session) {
-           setMessage('Please check your email for a confirmation link. Be sure to check your spam folder!');
-        } else if (data.session) {
-           // User is logged in, onAuthStateChange will handle closing the modal.
-           setMessage('Sign up successful! You are now signed in.');
-        }
-
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        await sendEmailVerification(userCredential.user);
+        setMessage('A verification email has been sent. Please check your inbox (and spam folder) to complete sign up!');
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        // The onAuthStateChange listener in App.tsx will handle closing the modal
+        await signInWithEmailAndPassword(auth, email, password);
+        // The onAuthStateChanged listener in App.tsx will handle closing the modal
       }
     } catch (err: any) {
-      setError(err.error_description || err.message);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
   
   const handleGoogleSignIn = async () => {
-    if (!supabase) {
+    if (!auth) {
         setError("Authentication is not configured.");
         return;
     }
     setGoogleLoading(true);
     setError(null);
-    const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin,
-          skipBrowserRedirect: true, // Prevent auto-redirect to handle iframe scenarios
-        },
-    });
-
-    if (error) {
-        setError(error.message);
-        setGoogleLoading(false);
-    } else if (data.url) {
-        window.open(data.url, '_top');
-    } else {
-        setError("Could not get the Google sign-in URL.");
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      // The onAuthStateChanged listener will handle closing the modal
+    } catch (err: any) {
+        setError(err.message);
+    } finally {
         setGoogleLoading(false);
     }
   };
@@ -157,7 +142,7 @@ export const LoginPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 className="w-full inline-flex justify-center items-center gap-3 py-3 px-4 text-md font-semibold rounded-lg border border-gray-600 bg-gray-800/50 text-gray-200 hover:bg-gray-700/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 {googleLoading ? (
-                    'Redirecting...'
+                    'Processing...'
                 ) : (
                     <>
                         <GoogleIcon className="w-5 h-5" />

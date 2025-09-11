@@ -1,82 +1,36 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-// Fix: Import HistoryItem from the central types file to ensure type consistency across the app.
-// Inlining the type created a separate declaration that conflicted with the one used in dataService.ts.
-import { HistoryItem } from '../types';
+// NOTE: This file is now used for Firebase client initialization, despite its legacy filename.
 
-// Inlined types are removed to use the single source of truth from types.ts
+import { initializeApp, getApp, getApps } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 
-// Define the database type for type safety with Supabase client
-// We are only typing the tables we interact with in this app.
-export type Database = {
-  public: {
-    Tables: {
-      bookmarks: {
-        Row: {
-          id: string;
-          history_item: HistoryItem;
-          created_at: string;
-          folder_id: string | null;
-        };
-        // Fix: Relaxed Insert and Update types to be more flexible and avoid inference issues.
-        Insert: {
-          id?: string;
-          history_item: HistoryItem;
-          created_at?: string;
-          folder_id: string | null;
-        };
-        Update: {
-          id?: string;
-          history_item?: HistoryItem;
-          created_at?: string;
-          folder_id?: string | null;
-        };
-        // FIX: Add empty Relationships array. The Supabase client's type inference requires this property to be present on table definitions.
-        Relationships: [];
-      };
-      folders: {
-        Row: {
-          id: string;
-          name: string;
-          created_at: string;
-        };
-        // Fix: Relaxed Insert and Update types to be more flexible and avoid inference issues.
-        Insert: {
-          id?: string;
-          name: string;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          name?: string;
-          created_at?: string;
-        };
-        // FIX: Add empty Relationships array. The Supabase client's type inference requires this property to be present on table definitions.
-        Relationships: [];
-      };
-    };
-    Views: {
-      [_ in never]: never;
-    };
-    Functions: {
-      [_ in never]: never;
-    };
-  };
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyBhLcP7n7-GKoef6-8G1ciH_NFzIaSK3oE",
+  authDomain: "plexi-ai-search.firebaseapp.com",
+  projectId: "plexi-ai-search",
+  storageBucket: "plexi-ai-search.firebasestorage.app",
+  messagingSenderId: "382067176941",
+  appId: "1:382067176941:web:9827e4ff2415fda9a763e4",
+  measurementId: "G-M9F5EQTBSJ"
 };
 
 
-const supabaseUrl = "https://pyjqceghzywgznhxzakg.supabase.co";
-export const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5anFjZWdoenl3Z3puaHh6YWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0ODE1MDMsImV4cCI6MjA3MzA1NzUwM30.OrMt01YVYPr-bgXgqx3Ny0Z7V38u-2fHRfJ3EIaLhH8";
+let app;
+let auth;
+let db;
+let functions;
 
-// The client will be null if the environment variables are not set.
-let supabase: SupabaseClient<Database> | null = null;
-
-if (supabaseUrl && supabaseAnonKey) {
-  supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
-} else {
-  // This is an expected state if the app is run without Supabase credentials.
-  // The dataService will handle the null client gracefully.
-  console.log("Supabase environment variables not set. Bookmarking features will be disabled.");
+try {
+  app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  auth = getAuth(app);
+  db = getFirestore(app);
+  functions = getFunctions(app);
+} catch (e) {
+  console.error("Firebase initialization failed. Please add your Firebase config to services/supabaseClient.ts", e);
+  // The app will be in a non-functional state for features requiring Firebase.
 }
 
-// Export the potentially null client.
-export { supabase };
+
+export { app, auth, db, functions };
