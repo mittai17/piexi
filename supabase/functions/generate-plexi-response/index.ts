@@ -51,23 +51,28 @@ const buildChatHistory = (history: HistoryItem[]): Content[] => {
 };
 
 Deno.serve(async (req) => {
-  // Handle CORS preflight request
+  // Robust CORS handling using the Headers API
+  const origin = req.headers.get("Origin");
+  const headers = new Headers();
+  headers.set('Access-Control-Allow-Headers', 'authorization, x-client-info, apikey, content-type');
+  headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  if (origin) {
+    headers.set('Access-Control-Allow-Origin', origin);
+  }
+
+  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
-    return new Response("ok", { 
-        headers: {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-        } 
-    });
+    return new Response("ok", { headers });
   }
 
   try {
     const { query, focus, history } = await req.json();
 
     if (!query) {
+      headers.set("Content-Type", "application/json");
       return new Response(JSON.stringify({ error: "Query is required" }), {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
     }
 
@@ -131,21 +136,18 @@ Deno.serve(async (req) => {
       },
     });
       
-    return new Response(stream, {
-      headers: { 
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-      },
-    });
+    headers.set("Content-Type", "text/event-stream");
+    headers.set("Cache-Control", "no-cache");
+    headers.set("Connection", "keep-alive");
+      
+    return new Response(stream, { headers });
 
   } catch (error) {
     console.error("Error in Edge Function:", error);
+    headers.set("Content-Type", "application/json");
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers,
     });
   }
 });

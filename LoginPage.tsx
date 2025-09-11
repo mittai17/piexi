@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { supabase } from './services/supabaseClient';
 import { PlexiLogo } from './components/PlexiLogo';
 import { GoogleIcon } from './components/GoogleIcon';
+import { CloseIcon } from './components/CloseIcon';
 
-export const LoginPage: React.FC = () => {
+export const LoginPage: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,14 +37,14 @@ export const LoginPage: React.FC = () => {
         if (data.user && !data.session) {
            setMessage('Please check your email for a confirmation link. Be sure to check your spam folder!');
         } else if (data.session) {
-           // User is logged in, onAuthStateChange will handle navigation.
-           setMessage('Sign up successful! Redirecting...');
+           // User is logged in, onAuthStateChange will handle closing the modal.
+           setMessage('Sign up successful! You are now signed in.');
         }
 
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        // The onAuthStateChange listener in App.tsx will handle the redirect
+        // The onAuthStateChange listener in App.tsx will handle closing the modal
       }
     } catch (err: any) {
       setError(err.error_description || err.message);
@@ -71,10 +72,6 @@ export const LoginPage: React.FC = () => {
         setError(error.message);
         setGoogleLoading(false);
     } else if (data.url) {
-        // Manually redirect the top-level window to break out of any iframes.
-        // Directly setting `window.top.location.href` can be blocked by restrictive
-        // iframe sandboxes. Using `window.open` with `_top` as the target is an
-        // alternative way to request navigation of the top-level browsing context.
         window.open(data.url, '_top');
     } else {
         setError("Could not get the Google sign-in URL.");
@@ -83,8 +80,22 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center w-full p-4 animate-fade-in">
-      <div className="bg-gray-900/50 border border-gray-700 rounded-2xl w-full max-w-sm p-8 shadow-2xl backdrop-blur-sm">
+    <div 
+        className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+        onClick={onClose}
+    >
+      <div 
+        className="relative bg-gray-900/80 border border-gray-700 rounded-2xl w-full max-w-sm p-8 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+         <button 
+            onClick={onClose}
+            className="absolute top-3 right-3 p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+            aria-label="Close"
+        >
+            <CloseIcon className="w-4 h-4" />
+        </button>
+
         <div className="text-center mb-8">
           <PlexiLogo className="w-20 h-20 mx-auto mb-4" />
           <h1 className="text-3xl font-bold text-white">
@@ -96,7 +107,10 @@ export const LoginPage: React.FC = () => {
         </div>
         
         {message ? (
-          <p className="my-4 text-center text-green-400 bg-green-900/20 p-3 rounded-md">{message}</p>
+          <div className="my-4 text-center">
+            <p className="text-green-400 bg-green-900/20 p-3 rounded-md">{message}</p>
+            <button onClick={onClose} className="mt-4 text-sm text-gray-400 hover:text-purple-400">Close</button>
+          </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <input
@@ -131,7 +145,7 @@ export const LoginPage: React.FC = () => {
                 <div className="w-full border-t border-gray-700" />
             </div>
             <div className="relative flex justify-center text-sm">
-                <span className="bg-gray-900/50 px-2 text-gray-500 backdrop-blur-sm">OR</span>
+                <span className="bg-gray-900/80 px-2 text-gray-500 backdrop-blur-sm">OR</span>
             </div>
         </div>
 

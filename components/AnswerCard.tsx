@@ -14,6 +14,8 @@ interface AnswerCardProps {
   onToggleBookmark: () => void;
   followupQuestions?: string[];
   onFollowupClick: (query: string) => void;
+  onSourceClick: (source: Source) => void;
+  onPrefetchSource: (source: Source) => void;
 }
 
 const SimpleMarkdown: React.FC<{ text: string }> = ({ text }) => {
@@ -116,6 +118,8 @@ export const AnswerCard: React.FC<AnswerCardProps> = ({
   onToggleBookmark,
   followupQuestions,
   onFollowupClick,
+  onSourceClick,
+  onPrefetchSource,
 }) => {
   const [shareFeedback, setShareFeedback] = useState('Share');
 
@@ -188,7 +192,7 @@ export const AnswerCard: React.FC<AnswerCardProps> = ({
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               {sources.map((source, index) => (
-                <SourceLink key={source.uri} source={source} rank={index + 1} />
+                <SourceLink key={source.uri} source={source} rank={index + 1} onClick={() => onSourceClick(source)} onPrefetch={() => onPrefetchSource(source)} />
               ))}
             </div>
           </div>

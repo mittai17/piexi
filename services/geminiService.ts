@@ -14,6 +14,10 @@ interface SendMessageCallbacks {
     onEnd: () => void;
 }
 
+// FIX: The Supabase functions URL is no longer publicly exposed on the client.
+// We construct it manually from the project URL, as direct fetch is needed for streaming.
+const functionsUrl = "https://pyjqceghzywgznhxzakg.supabase.co/functions/v1";
+
 
 const getFunctionErrorMessage = (error: any, context: string): string => {
     console.error(`Supabase Function Error in ${context}:`, error);
@@ -24,12 +28,28 @@ const getFunctionErrorMessage = (error: any, context: string): string => {
         if (error.message.includes('Function not found')) {
             return `Error: The '${context}' function could not be found. Please ensure it has been deployed correctly.`;
         }
+        if (error.message.includes('Failed to fetch')) { // Updated for native fetch
+            return `Error: Could not connect to the AI service. Please check your network connection and try again.`;
+        }
     }
-    return `An unexpected error occurred with the '${context}' function. Please try again.`;
+    return `An unexpected error occurred with the '${context}' function: ${error.message || 'Unknown error'}`;
 }
 
-// No longer creates a chat object, as conversation history is managed in App.tsx
-// and sent with each request to the backend function.
+const getAuthHeaders = async (): Promise<{ [key: string]: string }> => {
+    if (!supabase || !supabaseAnonKey) {
+        throw new Error("Supabase client is not initialized.");
+    }
+    const { data: { session } } = await supabase.auth.getSession();
+    const headers: { [key: string]: string } = {
+        'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey,
+    };
+    if (session) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+    }
+    return headers;
+};
+
 export const createChat = (): null => {
     return null;
 };
@@ -40,42 +60,32 @@ export const sendMessage = async (
     history: HistoryItem[], 
     callbacks: SendMessageCallbacks
 ): Promise<void> => {
-    if (!supabase || !supabaseAnonKey) {
-        throw new Error("Supabase client is not initialized. Cannot call Edge Function.");
-    }
-    
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-        throw new Error("User not authenticated.");
-    }
-
     try {
-        // FIX: Replaced manual `fetch` with `supabase.functions.invoke` which supports streaming
-        // and correctly handles authentication and function URL resolution, fixing the protected property access error.
-        // FIX: `responseType: 'stream'` can cause a type error if the Supabase client's types are outdated. Casting to `any` bypasses the check.
-        const { data: responseBody, error: invokeError } = await supabase.functions.invoke('generate-plexi-response', {
-            body: { query, focus, history },
-            responseType: 'stream',
-        } as any);
+        if (!supabase) throw new Error("Supabase client not initialized.");
         
-        if (invokeError) {
-            throw invokeError;
+        const headers = await getAuthHeaders();
+        // FIX: Replaced protected property `supabase.functions.url` with a manually constructed URL.
+        const functionUrl = `${functionsUrl}/generate-plexi-response`;
+
+        const response = await fetch(functionUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ query, focus, history }),
+        });
+
+        if (!response.ok || !response.body) {
+            const errorBody = await response.text();
+            throw new Error(`Function returned status ${response.status}: ${errorBody}`);
         }
 
-        if (!responseBody) {
-            throw new Error("Response body is empty.");
-        }
-
-        const reader = responseBody.getReader();
+        const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
         const processStream = async () => {
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) {
-                    break;
-                }
+                if (done) break;
 
                 buffer += decoder.decode(value, { stream: true });
                 const parts = buffer.split('\n\n');
@@ -88,18 +98,15 @@ export const sendMessage = async (
 
                         if (eventMatch && dataMatch) {
                             const event = eventMatch[1];
-                            const data = JSON.parse(dataMatch[1]);
-
-                            switch(event) {
-                                case 'chunk':
-                                    callbacks.onChunk(data);
-                                    break;
-                                case 'metadata':
-                                    callbacks.onMetadata(data);
-                                    break;
-                                case 'error':
-                                    callbacks.onError(data);
-                                    break;
+                            try {
+                                const data = JSON.parse(dataMatch[1]);
+                                switch(event) {
+                                    case 'chunk': callbacks.onChunk(data); break;
+                                    case 'metadata': callbacks.onMetadata(data); break;
+                                    case 'error': callbacks.onError(data); break;
+                                }
+                            } catch (e) {
+                                console.error("Failed to parse stream data chunk:", dataMatch[1]);
                             }
                         }
                     }
@@ -111,7 +118,6 @@ export const sendMessage = async (
         callbacks.onEnd();
 
     } catch (error) {
-        console.error("Error calling edge function:", error);
         callbacks.onError({ message: getFunctionErrorMessage(error, 'generate-plexi-response') });
         callbacks.onEnd();
     }
@@ -121,25 +127,89 @@ export const generateSessionSummary = async (history: HistoryItem[]): Promise<st
     if (history.length === 0) {
         return "This session is empty. Start a search to generate a summary.";
     }
-    if (!supabase) {
-        throw new Error("Supabase client is not initialized. Cannot call Edge Function.");
-    }
-
     try {
-         const { data, error } = await supabase.functions.invoke('generate-summary', {
-            body: { history },
+        if (!supabase) throw new Error("Supabase client not initialized.");
+        const headers = await getAuthHeaders();
+        // FIX: Replaced protected property `supabase.functions.url` with a manually constructed URL.
+        const functionUrl = `${functionsUrl}/generate-summary`;
+
+        const response = await fetch(functionUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ history }),
         });
 
-        if (error) {
-            throw error;
+        if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+            throw new Error(errorBody.error || `Function returned status ${response.status}`);
         }
-        
+
+        const data = await response.json();
         if (!data || typeof data.summary !== 'string' || !data.summary) {
              throw new Error("The AI returned an empty summary.");
         }
-
         return data.summary;
+
     } catch(error) {
         throw new Error(getFunctionErrorMessage(error, 'generate-summary'));
     }
 }
+
+export const generateTabTitle = async (history: HistoryItem[]): Promise<string> => {
+    if (history.length === 0) {
+        return "New Tab";
+    }
+     try {
+        if (!supabase) throw new Error("Supabase client not initialized.");
+        const headers = await getAuthHeaders();
+        // FIX: Replaced protected property `supabase.functions.url` with a manually constructed URL.
+        const functionUrl = `${functionsUrl}/generate-tab-title`;
+
+        const response = await fetch(functionUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ history }),
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+            throw new Error(errorBody.error || `Function returned status ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data || typeof data.title !== 'string' || !data.title) {
+             throw new Error("The AI returned an empty title.");
+        }
+
+        return data.title;
+    } catch(error) {
+        throw new Error(getFunctionErrorMessage(error, 'generate-tab-title'));
+    }
+}
+
+export const summarizePageContent = async (url: string): Promise<string> => {
+    try {
+        if (!supabase) throw new Error("Supabase client not initialized.");
+        const headers = await getAuthHeaders();
+        const functionUrl = `${functionsUrl}/summarize-page`;
+
+        const response = await fetch(functionUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ url }),
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
+            throw new Error(errorBody.error || `Function returned status ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data || typeof data.summary !== 'string' || !data.summary) {
+             throw new Error("The AI returned an empty summary.");
+        }
+        return data.summary;
+    } catch(error) {
+        throw new Error(getFunctionErrorMessage(error, 'summarize-page'));
+    }
+};

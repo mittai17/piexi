@@ -32,35 +32,41 @@ Deno.serve(async (req) => {
   try {
     const { history } = await req.json();
 
-    if (!history || !Array.isArray(history)) {
+    if (!history || !Array.isArray(history) || history.length === 0) {
       headers.set("Content-Type", "application/json");
-      return new Response(JSON.stringify({ error: "History array is required" }), {
+      return new Response(JSON.stringify({ error: "History array with at least one item is required" }), {
         status: 400,
         headers,
       });
     }
 
-    const conversationContext = history.map((item: HistoryItem) => `User Query: "${item.query}"\nAI Answer: "${item.answer.substring(0, 200)}..."`).join('\n\n');
-    const prompt = `Based on the following conversation history, please provide a concise, one-paragraph summary of the key topics and findings. The user is conducting a research session, so focus on the main themes discovered.\n\nConversation:\n${conversationContext}`;
+    // Create a concise context from the history
+    const conversationContext = history
+        .map((item: HistoryItem) => `Q: ${item.query}`)
+        .join('\n');
+
+    const prompt = `Based on the following list of search queries from a research session, create a very short, concise title (2-4 words maximum). The title should capture the main theme of the research.\n\nQueries:\n${conversationContext}\n\nTitle:`;
     
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
-        systemInstruction: "You are an expert research assistant, skilled at summarizing complex information into a brief, insightful overview."
+        stopSequences: ["\n"],
+        temperature: 0.2,
       }
     });
 
-    const summary = response.text;
-    if (!summary) throw new Error("The AI returned an empty summary.");
+    const title = response.text.replace(/["']/g, "").trim();
+
+    if (!title) throw new Error("The AI returned an empty title.");
 
     headers.set("Content-Type", "application/json");
-    return new Response(JSON.stringify({ summary }), {
+    return new Response(JSON.stringify({ title }), {
       headers,
     });
 
   } catch (error) {
-    console.error("Error in Summary Edge Function:", error);
+    console.error("Error in generate-tab-title Edge Function:", error);
     headers.set("Content-Type", "application/json");
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,

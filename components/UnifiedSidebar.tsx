@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { AppMode, Bookmark, Folder, HistoryItem, TabSession } from '../types';
+import { AppMode, Bookmark, Folder, HistoryItem, TabSession, Extension, ExtensionID } from '../types';
 import { HistoryIcon } from './HistoryIcon';
 import { BookmarkSidebarIcon } from './BookmarkSidebarIcon';
 import { InsightsIcon } from './InsightsIcon';
@@ -13,8 +13,10 @@ import { TabsIcon } from './TabsIcon';
 import { TrashIcon } from './TrashIcon';
 import { supabase } from '../services/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
+import { SparkleIcon } from './SparkleIcon';
+import { ExtensionIcon } from './ExtensionIcon';
 
-type SidebarView = 'tabs' | 'history' | 'bookmarks' | 'insights' | 'settings';
+type SidebarView = 'tabs' | 'history' | 'bookmarks' | 'insights' | 'settings' | 'extensions';
 
 interface UnifiedSidebarProps {
   isOpen: boolean;
@@ -27,6 +29,8 @@ interface UnifiedSidebarProps {
   onSwitchTab: (tabId: string) => void;
   onRenameTab: (tabId: string, newTitle: string) => void;
   onReorderTabs: (draggedId: string, targetId: string) => void;
+  generatingTitleTabId: string | null;
+  onGenerateTabTitle: (tabId: string) => void;
   // History
   activeHistory: HistoryItem[];
   onHistoryItemClick: (index: number) => void;
@@ -43,13 +47,20 @@ interface UnifiedSidebarProps {
   onClearHistory: () => void;
   // Auth
   session: Session | null;
+  onShowLogin: () => void;
+  // Extensions
+  availableExtensions: Extension[];
+  installedExtensions: ExtensionID[];
+  enabledExtensions: ExtensionID[];
+  onToggleExtension: (id: ExtensionID, enabled: boolean) => void;
+  onShowExtensionStore: () => void;
 }
 
 export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = (props) => {
   const [activeView, setActiveView] = useState<SidebarView>('tabs');
   const logoInnerColor = props.mode === 'incognito' ? '#202124' : '#121212';
   
-  const views: SidebarView[] = ['tabs', 'history', 'bookmarks', 'insights', 'settings'];
+  const views: SidebarView[] = ['tabs', 'history', 'bookmarks', 'extensions', 'insights', 'settings'];
   const currentViewIndex = views.indexOf(activeView);
 
   return (
@@ -97,21 +108,27 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = (props) => {
             >
                 <BookmarksView {...props} />
             </div>
+             <div
+                className={`absolute top-0 left-0 w-full h-full overflow-y-auto transition-all duration-300 ease-in-out ${activeView === 'extensions' ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                style={{ transform: `translateX(${(3 - currentViewIndex) * 100}%)` }}
+            >
+                <ExtensionsView {...props} />
+            </div>
             <div
                 className={`absolute top-0 left-0 w-full h-full overflow-y-auto transition-all duration-300 ease-in-out ${activeView === 'insights' ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                style={{ transform: `translateX(${(3 - currentViewIndex) * 100}%)` }}
+                style={{ transform: `translateX(${(4 - currentViewIndex) * 100}%)` }}
             >
                 <InsightsView history={props.activeHistory} isActive={activeView === 'insights'} />
             </div>
             <div
                 className={`absolute top-0 left-0 w-full h-full overflow-y-auto transition-all duration-300 ease-in-out ${activeView === 'settings' ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                style={{ transform: `translateX(${(4 - currentViewIndex) * 100}%)` }}
+                style={{ transform: `translateX(${(5 - currentViewIndex) * 100}%)` }}
             >
                 <SettingsView {...props} />
             </div>
         </div>
         
-        <footer className="flex-shrink-0 flex items-center justify-around p-2 bg-black/20 border-t border-gray-800/50">
+        <footer className="flex-shrink-0 grid grid-cols-3 gap-1 p-2 bg-black/20 border-t border-gray-800/50">
            <SidebarNavButton
                 label="Tabs"
                 icon={<TabsIcon className="w-6 h-6" />}
@@ -129,6 +146,12 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = (props) => {
                 icon={<BookmarkSidebarIcon className="w-6 h-6" />}
                 isActive={activeView === 'bookmarks'}
                 onClick={() => setActiveView('bookmarks')}
+           />
+           <SidebarNavButton
+                label="Extensions"
+                icon={<ExtensionIcon className="w-6 h-6" />}
+                isActive={activeView === 'extensions'}
+                onClick={() => setActiveView('extensions')}
            />
            <SidebarNavButton
                 label="Insights"
@@ -154,7 +177,7 @@ export const UnifiedSidebar: React.FC<UnifiedSidebarProps> = (props) => {
 const SidebarNavButton: React.FC<{label: string, icon: React.ReactNode, isActive: boolean, onClick: () => void}> = ({ label, icon, isActive, onClick }) => (
     <button
         onClick={onClick}
-        className={`flex flex-col items-center justify-center p-2 rounded-lg w-16 h-16 transition-colors duration-200 ${isActive ? 'bg-purple-800/40 text-white' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'}`}
+        className={`flex flex-col items-center justify-center p-2 rounded-lg w-full h-16 transition-colors duration-200 ${isActive ? 'bg-purple-800/40 text-white' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'}`}
         aria-label={label}
         title={label}
     >
@@ -163,7 +186,7 @@ const SidebarNavButton: React.FC<{label: string, icon: React.ReactNode, isActive
     </button>
 );
 
-const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onNewTab' | 'onCloseTab' | 'onSwitchTab'| 'onRenameTab' | 'onReorderTabs'>> = (props) => {
+const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onNewTab' | 'onCloseTab' | 'onSwitchTab'| 'onRenameTab' | 'onReorderTabs' | 'generatingTitleTabId' | 'onGenerateTabTitle'>> = (props) => {
     const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
     const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
@@ -239,7 +262,7 @@ const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onN
                         onDrop={(e) => handleDrop(e, tab.id)}
                         onClick={() => props.onSwitchTab(tab.id)}
                         onDoubleClick={() => handleStartRename(tab)}
-                        className={`flex items-center gap-2 w-full p-2 rounded-md cursor-pointer transition-all duration-200 ${ props.activeTabId === tab.id ? 'bg-purple-800/50 text-white' : 'text-gray-400 hover:bg-gray-700/50' } ${ draggedTabId === tab.id ? 'opacity-30' : ''} ${ dropTargetId === tab.id ? 'ring-2 ring-purple-500' : ''}`}
+                        className={`group flex items-center gap-2 w-full p-2 rounded-md cursor-pointer transition-all duration-200 ${ props.activeTabId === tab.id ? 'bg-purple-800/50 text-white' : 'text-gray-400 hover:bg-gray-700/50' } ${ draggedTabId === tab.id ? 'opacity-30' : ''} ${ dropTargetId === tab.id ? 'ring-2 ring-purple-500' : ''}`}
                         title={tab.title}
                     >
                         {tab.isLoading && <TabSpinner />}
@@ -257,6 +280,21 @@ const TabsView: React.FC<Pick<UnifiedSidebarProps, 'tabs' | 'activeTabId' | 'onN
                             <span className="truncate text-sm">{tab.title}</span>
                         )}
                         <div className="flex-grow" />
+                        <div className="flex items-center">
+                            {props.generatingTitleTabId === tab.id ? (
+                                <TabSpinner />
+                            ) : (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); props.onGenerateTabTitle(tab.id); }}
+                                    disabled={tab.history.length === 0}
+                                    className="p-1 rounded-full text-purple-400/70 hover:text-purple-300 hover:bg-gray-600/50 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-0"
+                                    aria-label={`Generate AI title for ${tab.title}`}
+                                    title="Generate AI title"
+                                >
+                                    <SparkleIcon className="w-4 h-4" />
+                                </button>
+                            )}
+                        </div>
                         <button
                             onClick={(e) => { e.stopPropagation(); props.onCloseTab(tab.id); }}
                             disabled={props.tabs.length <= 1}
@@ -321,10 +359,26 @@ const BookmarkItem: React.FC<{ bookmark: Bookmark, onDelete: (id: string) => voi
 );
 
 
-const BookmarksView: React.FC<Pick<UnifiedSidebarProps, 'bookmarks' | 'folders' | 'onAddFolder' | 'onDeleteFolder' | 'onMoveBookmark' | 'onDeleteBookmark'>> = (props) => {
+const BookmarksView: React.FC<Pick<UnifiedSidebarProps, 'bookmarks' | 'folders' | 'onAddFolder' | 'onDeleteFolder' | 'onMoveBookmark' | 'onDeleteBookmark' | 'session' | 'onShowLogin'>> = (props) => {
     const [newFolderName, setNewFolderName] = useState('');
     const [draggedBookmarkId, setDraggedBookmarkId] = useState<string | null>(null);
     const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
+
+    if (!props.session) {
+        return (
+            <div className="p-6 text-center text-gray-400 flex flex-col items-center justify-center h-full">
+                <BookmarkSidebarIcon className="w-12 h-12 mx-auto mb-4 text-gray-600" />
+                <h3 className="font-bold text-lg text-white mb-2">Save Your Discoveries</h3>
+                <p className="text-sm mb-6">Sign in to bookmark your favorite answers and organize them into folders across all your devices.</p>
+                <button
+                    onClick={props.onShowLogin}
+                    className="w-full px-4 py-2 font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+                >
+                    Sign In / Sign Up
+                </button>
+            </div>
+        );
+    }
 
     const handleAddFolder = (e: React.FormEvent) => {
         e.preventDefault();
@@ -520,7 +574,7 @@ const InsightsView: React.FC<{history: HistoryItem[], isActive: boolean}> = ({ h
     );
 };
 
-const SettingsView: React.FC<Pick<UnifiedSidebarProps, 'mode' | 'onToggleIncognito' | 'onClearHistory' | 'session'>> = ({ mode, onToggleIncognito, onClearHistory, session }) => {
+const SettingsView: React.FC<Pick<UnifiedSidebarProps, 'mode' | 'onToggleIncognito' | 'onClearHistory' | 'session' | 'onShowLogin'>> = ({ mode, onToggleIncognito, onClearHistory, session, onShowLogin }) => {
     const handleLogout = async () => {
         if (supabase) {
             const { error } = await supabase.auth.signOut();
@@ -532,17 +586,29 @@ const SettingsView: React.FC<Pick<UnifiedSidebarProps, 'mode' | 'onToggleIncogni
     
     return (
         <div className="p-4 space-y-6">
-            <div className="p-4 bg-gray-800/50 rounded-lg space-y-4">
-                <p className="text-gray-300 break-words">
-                    Signed in as <span className="font-semibold text-white">{session?.user.email}</span>
-                </p>
-                <button
-                    onClick={handleLogout}
-                    className="w-full px-4 py-2 text-md font-semibold text-white bg-gray-600 hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                    Sign Out
-                </button>
-            </div>
+            {session ? (
+                <div className="p-4 bg-gray-800/50 rounded-lg space-y-4">
+                    <p className="text-gray-300 break-words">
+                        Signed in as <span className="font-semibold text-white">{session.user.email}</span>
+                    </p>
+                    <button
+                        onClick={handleLogout}
+                        className="w-full px-4 py-2 text-md font-semibold text-white bg-gray-600 hover:bg-gray-700 rounded-lg transition-colors"
+                    >
+                        Sign Out
+                    </button>
+                </div>
+            ) : (
+                <div className="p-4 bg-gray-800/50 rounded-lg space-y-4">
+                    <p className="text-center text-gray-400">Create an account to save your data across devices.</p>
+                     <button
+                        onClick={onShowLogin}
+                        className="w-full px-4 py-2 font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+                    >
+                        Sign In / Sign Up
+                    </button>
+                </div>
+            )}
             
             <div className='space-y-4 p-4 bg-gray-800/50 rounded-lg'>
                <ToggleSwitch
@@ -556,6 +622,45 @@ const SettingsView: React.FC<Pick<UnifiedSidebarProps, 'mode' | 'onToggleIncogni
               className="w-full px-4 py-3 text-lg font-semibold text-white bg-red-600/80 hover:bg-red-600 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-red-500"
             >
               Clear Current Tab History
+            </button>
+        </div>
+    );
+};
+
+const ExtensionsView: React.FC<Pick<UnifiedSidebarProps, 'availableExtensions' | 'installedExtensions' | 'enabledExtensions' | 'onToggleExtension' | 'onShowExtensionStore'>> = (props) => {
+    const installed = useMemo(() => {
+        return props.availableExtensions.filter(ext => props.installedExtensions.includes(ext.id));
+    }, [props.availableExtensions, props.installedExtensions]);
+    
+    return (
+         <div className="p-4 space-y-6">
+            <h2 className="text-lg font-bold">Installed Extensions</h2>
+            {installed.length > 0 ? (
+                <div className="p-4 bg-gray-800/50 rounded-lg">
+                    <div className="space-y-6 divide-y divide-gray-700/50">
+                        {installed.map(ext => (
+                            <div key={ext.id} className="pt-6 first:pt-0">
+                                <ToggleSwitch
+                                    label={ext.name}
+                                    enabled={props.enabledExtensions.includes(ext.id)}
+                                    onChange={(enabled) => props.onToggleExtension(ext.id, enabled)}
+                                />
+                                <p className="text-sm text-gray-400 mt-2 pr-16">{ext.description}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                <div className="p-8 text-center text-gray-500">
+                  <p>You don't have any extensions installed yet.</p>
+                </div>
+            )}
+
+            <button
+                onClick={props.onShowExtensionStore}
+                className="w-full px-4 py-3 text-lg font-semibold text-white bg-purple-600/80 hover:bg-purple-600 rounded-lg transition-colors"
+            >
+                Browse Extension Store
             </button>
         </div>
     );
